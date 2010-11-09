@@ -1,0 +1,28 @@
+// visualization by Toby Matejovsky 11/2010 using streamgraph.js, which is by Jason Sundram 5/2010, based on Byron & Wattenberg's Streamgraph Generator.
+
+function getStreamgraphSettings()
+{
+  var s = new Settings();
+  s.colors.background = 200;
+  s.colors.neutral = 100;
+  s.colors.highlight = 0;
+
+  s.show_settings = false;
+  s.show_legend = false;
+
+  s.ColorPicker.current = "NiceRandom";
+  return s;
+}
+
+function getStreamgraphData()
+{
+  var data = <%= JSON(@data)%>;
+
+  return data;
+}
+
+function getStreamgraphLabels()
+{
+  var labels = <%= JSON(@labels) %>;
+  return labels;
+}

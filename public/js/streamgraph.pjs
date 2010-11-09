@@ -1,0 +1,532 @@
+// By Jason Sundram 5/2010, based on Byron & Wattenberg's Streamgraph Generator.
+
+/* GLOBALS :( */
+
+var SETTINGS = null;
+// See if the user provided some settings for us:
+try
+{
+    SETTINGS = getStreamgraphSettings();
+}
+catch(e)
+{
+    console.log(e);
+    SETTINGS = new Settings();
+}
+
+var LAYERS = null;
+
+/* Import data Dataset*/
+var RAW_DATA = getStreamgraphData();
+var DATA_LABELS = getStreamgraphLabels();
+
+var RedrawRegions = {};// enum 
+RedrawRegions.all = 0;
+RedrawRegions.hover = 1;
+RedrawRegions.zoom = 2;
+RedrawRegions.color = 3;
+
+var REDRAW_REGION = RedrawRegions.all;
+
+
+void setup()
+{
+    size(window.innerWidth, window.innerHeight);
+    
+    var image_loaded = function(){console.log("image loaded"); REDRAW_REGION = RedrawRegions.color; redraw();}
+    SETTINGS.LastFmColors = loadImage(SETTINGS.colors.image, 'jpg', image_loaded);
+    SETTINGS.bounds = null;
+    SETTINGS.layer_colors = [];
+    SETTINGS.start = 0;
+    SETTINGS.end = -1;
+    
+    background(SETTINGS.colors.background);
+    smooth();
+    
+    window.onresize = function() { REDRAW_REGION = RedrawRegions.all; redraw(); }
+    noLoop(); // This needs to be called last.
+}
+
+
+void draw()
+{
+    var m = millis();
+    
+    if (REDRAW_REGION == RedrawRegions.all)
+    {
+        try
+        {
+            size(window.innerWidth, window.innerHeight);
+        }
+        catch(e)
+        {
+            // This is a known issue in processing v0.8:
+            // https://processing-js.lighthouseapp.com/projects/41284-processingjs/tickets/576
+            //console.log('expected error: '  + e);
+        }
+    }
+    
+    /* Set up screen geometry */
+    var text_height = 20;
+    var settings_top = SETTINGS.show_settings ? height - text_height : height;
+    var legend_bottom = SETTINGS.show_legend ? text_height : 0;
+    var legend_right = SETTINGS.show_legend ? width - 175 : 0;
+    SETTINGS.bounds = new Rect(0, settings_top, width, text_height);
+    
+    /* Deal with mouse hover stuff */
+    // Would like to size this rect so that we know it can fit whatever text it has to.
+    // but there is no way to measure text in processing.js yet.
+    var hover = new Rect(legend_right, 2, width - legend_right, text_height*.75);
+    if (REDRAW_REGION == RedrawRegions.hover)
+    {
+        drawHoverText(hover);
+        return;
+    }
+    
+    if (REDRAW_REGION == RedrawRegions.zoom)
+    {
+        drawZoom(legend_bottom);
+        return;
+    }
+    
+    var data = new DataSource(RAW_DATA, DATA_LABELS);
+    var layers = data.make(DATA_LABELS.length, RAW_DATA.length);
+    if (SETTINGS.end == -1)
+        SETTINGS.end = RAW_DATA.length;
+    
+    /* Calculate */
+    var layer_sort = SETTINGS.get('Sort');
+    var layers = layer_sort(layers);
+    
+    var layer_layout = SETTINGS.get('Layout');
+    layer_layout(layers);
+    
+    // Don't change colors when redrawing unless we were told to.
+    if (REDRAW_REGION != RedrawRegions.color && 0 < SETTINGS.layer_colors.length) 
+    {
+        for (int i= 0; i < layers.length; i++)
+            layers[i].rgb = SETTINGS.layer_colors[i];
+    }
+    else
+    {
+        var color_picker = SETTINGS.get('ColorPicker');
+        color_picker(layers, SETTINGS.LastFmColors);
+    }
+    
+    // Just because we have all this space, doesn't mean we should use it all.
+    // The graphs tend to look better when they are wider than they are long.
+    var h = width / 4;
+    if (settings_top - legend_bottom < h)
+        h = settings_top - legend_bottom;
+    var space = ((settings_top - legend_bottom) - h) / 2;
+    
+    scaleLayers(layers, legend_bottom + space, settings_top - space);
+    
+    /* Draw */
+    var curve = SETTINGS.get('Curve');
+    drawLayers(layers, curve());
+    
+    if (SETTINGS.show_legend)
+        drawLegend(new Rect(0, 0, legend_right, legend_bottom), layers);
+    if (SETTINGS.show_settings)
+        drawSettings(SETTINGS.bounds);
+    
+    /* Used for hit testing */
+    if (REDRAW_REGION == RedrawRegions.color || 0 == SETTINGS.layer_colors.length) 
+        SETTINGS.layer_colors = storeColors(layers);
+    LAYERS = layers;
+    //console.log("total time to draw: ", millis() - m);
+}
+
+
+void scaleLayers(Layer[] layers, int screenTop, int screenBottom) 
+{
+    // Figure out max and min values of layers.
+    float lmin = layers[0].yTop[SETTINGS.start];
+    float lmax = layers[0].yBottom[SETTINGS.start];
+    for (int i = SETTINGS.start; i < SETTINGS.end; i++)
+    {
+        for (int j = 0; j < layers.length; j++)
+        {
+            lmin = min(lmin, layers[j].yTop[i]);
+            lmax = max(lmax, layers[j].yBottom[i]);
+        }
+    }
+    
+    float scale = (screenBottom - screenTop) / (lmax - lmin);
+    for (int i = SETTINGS.start; i < SETTINGS.end; i++)
+    {
+        for (int j = 0; j < layers.length; j++)
+        {
+            layers[j].yTop[i] = screenTop + scale * (layers[j].yTop[i] - lmin);
+            layers[j].yBottom[i] = screenTop + scale * (layers[j].yBottom[i] - lmin);
+        }
+    }
+}
+
+
+void drawLayers(Layers[] layers, boolean isGraphCurved)
+{
+    int n = layers.length;
+    int m = SETTINGS.end;
+    int lastLayer = n - 1;
+    
+    background(SETTINGS.colors.background);
+    pushStyle();
+    noStroke();
+    
+    // Generate graph.
+    for (int i = 0; i < n; i++) 
+    {
+        Layer layer = layers[i];
+        
+        int start = max(SETTINGS.start, layer.onset - 1);
+        int end   = min(m - 1, layer.end);
+        boolean pxl = (i == lastLayer);
+        
+        var c = getColor(layer); 
+        colorMode.apply(this, c.slice(0,2)); // i.e. colorMode(c[0], c[1])
+        fill.apply(this, c.slice(2));       // i.e. fill(c[2], c[3], c[4])
+        
+        // Draw shape.
+        beginShape();
+        
+        // Draw top edge, left to right.
+        graphVertex(start, layer.yTop, isGraphCurved, pxl);
+        for (int j = start; j <= end; j++)
+            graphVertex(j, layer.yTop, isGraphCurved, pxl);
+        
+        graphVertex(end, layer.yTop, isGraphCurved, pxl);
+        
+        // Draw bottom edge, right to left.
+        graphVertex(end, layer.yBottom, isGraphCurved, false);
+        for (int j = end; j >= start; j--)
+            graphVertex(j, layer.yBottom, isGraphCurved, false);
+        
+        graphVertex(start, layer.yBottom, isGraphCurved, false);
+        
+        endShape(CLOSE);
+    }
+    
+    popStyle();
+}
+
+
+void graphVertex(int point, float[] source, boolean curve, boolean pxl)
+{
+    float x = map(point, SETTINGS.start, SETTINGS.end-1, 0, width);
+    float y = source[point] - (pxl ? 1 : 0);
+    if (curve)
+        curveVertex(x, y);
+    else
+        vertex(x, y);
+}
+
+
+void drawSettings(r)
+{
+    var spacing = 10; // Space between setting groups.
+    var text_left = r.left;
+    var text_width = (r.width - spacing * (SETTINGS.num_types() - 1)) / SETTINGS.num_options();
+    var text_height = r.height * .75;
+    var text_top = r.bottom() - text_height;
+    
+    pushStyle();
+    colorMode(RGB, 255);
+    textFont("Arial", text_height);
+    
+    for (var i = 0; i < SETTINGS.num_types(); i++)
+    {
+        var setting = SETTINGS.settings[i]; // settings. There, I said it again.
+        var num_values = setting.values.length;
+        
+        // Draw rect for this setting.
+        pushStyle();
+        noFill();
+        stroke(128);
+        strokeWeight(1);
+        rect(text_left, r.top, text_width * num_values, r.height);
+        popStyle();
+        
+        setting.rects = []; // Tack on rects for hit-testing.
+        for (var j = 0; j < num_values; j++)
+        {
+            var value = setting.values[j];
+            var text_color = (value == setting.current) ? SETTINGS.colors.highlight : SETTINGS.colors.neutral;
+            fill(text_color);
+            text(value, text_left, text_top, text_width, text_height);
+            setting.rects[j] = new Rect(text_left, r.top, text_width, r.height);
+            text_left += text_width;
+        }
+        text_left += spacing;
+    }
+    popStyle();
+}
+
+
+// Return colorMode, range, color triplet (either in rgb or hsb, specified by colorMode)
+Array getColor(layer)
+{
+    if (layer.hasOwnProperty('hsb'))
+        return [HSB, 1.0].concat(layer.hsb);
+    
+    // Assume some variety of rgb.
+    try
+    {
+        if (4 < layer.rgb.length) // rgba (image.pixels returns this)
+            layer.rgb = rgbaToInt(layer.rgb);
+        
+        if (typeof(layer.rgb) == 'number')
+            return [RGB, 255, red(layer.rgb), green(layer.rgb), blue(layer.rgb), alpha(layer.rgb)];
+    }
+    catch(e)
+    {
+        // This will happen if the initial color set is set to 
+        // LastFmColors, and the image hasn't finished loading yet.
+        return [RGB, 255, SETTINGS.colors.background];
+    }
+    
+    return [RGB, 255].concat(layer.rgb);
+}
+
+
+void drawLegend(Rect r, Layers[] layers)
+{
+    pushStyle();
+    
+    var left = r.left;
+    var entry_width = r.width / layers.length;
+    var block_width = .3 * entry_width; // rect
+    var text_width = .6 * entry_width; // text
+    var space = entry_width - block_width - text_width; // space
+    
+    textFont("Arial", r.height);
+    noStroke();
+    for (var i = 0; i < layers.length; i++)
+    {
+        var layer = layers[i];
+        
+        var c = getColor(layer); // colorMode, range, color triplet [r, g, b] or  [h, s, b]
+        colorMode.apply(this, c.slice(0,2)); // i.e. colorMode(c[0], c[1])
+        fill.apply(this, c.slice(2));       // i.e. fill(c[2], c[3], c[4])
+        
+        rect(left, r.top, block_width, r.height);
+        left += block_width + space;
+        
+        // + r.height/4 on the line below is a total fudge for alignment in v0.8
+        // It wasn't necessary in processing.js v0.6 (just used r.bottom()).
+        text(layer.name, left, r.top + r.height / 4, text_width, r.height);
+        left += text_width;
+    }
+    popStyle();
+}
+
+/* The remainder of the file is dedicated to handling clicks and hover.*/
+void storeColors(layers)
+{
+    pushStyle();
+    for (var i = 0; i < layers.length; i++)
+    {
+        var c = getColor(layers[i]);
+        colorMode.apply(this, c.slice(0,2));
+        stroke.apply(this, c.slice(2));
+        point(width-1, i);
+    }
+    popStyle();
+    return get(width-1, 0, 1, layers.length).pixels;
+}
+
+
+void drawHoverText(Rect r)
+{
+    pushStyle();
+    noStroke();
+    fill(SETTINGS.colors.background); // erase background
+    rect(r.left, r.top, r.width, r.height + r.height/4);// descenders
+    
+    var h = getLayerHover();
+    if (0 <= h)
+    {
+        var i = Math.floor(LAYERS[h].size.length * mouseX / width);
+        var val = LAYERS[h].size[i]; 
+        fill(SETTINGS.colors.neutral);
+        textFont("Arial", r.height);
+        // add .00001 to make sure this shows up as a float (i.e. that nf succeeds.)
+        var hover_text = LAYERS[h].name + ' (' + nf(i, 2) + ') ' + ': ' + nf(val + 0.00001, 2, 3);
+        text(hover_text, r.left+1, r.top + r.height / 4, r.width, r.height);
+    }
+    popStyle();
+}
+
+
+void drawZoom(int top)
+{
+    var s, w;
+    if (startX)
+    {
+        s = min(startX, mouseX);
+        w = Math.abs(mouseX - startX);
+        fill(SETTINGS.colors.highlight);
+    }
+    else
+    {
+        s = 0;
+        w = width;
+        fill(SETTINGS.colors.background);
+    }
+    rect(s, top, w, 10);
+}
+
+
+void mouseClicked()
+{
+    // Did we click the settings?
+    if (SETTINGS.bounds !== null && SETTINGS.bounds.contains(mouseX, mouseY))
+    {
+        // See which setting got the click.
+        dance: // You'll see ...
+        for (var i = 0; i < SETTINGS.num_types(); i++)
+        {
+            var setting = SETTINGS.settings[i]; // settings. There, I said it again.
+            
+            for (var j = 0; j < setting.values.length; j++)
+            {
+                if (setting.rects[j].contains(mouseX, mouseY))
+                {
+                    console.log("Changed settings", setting.current, " to ", setting.values[j]);
+                    setting.current = setting.values[j];
+                    REDRAW_REGION = (setting.kind == "ColorPicker") ? RedrawRegions.color : RedrawRegions.all;
+                    redraw();
+                    break dance; // see?
+                }
+            }
+        }
+    }
+}
+
+
+int getLayerHover()
+{
+    try
+    {
+        for (var i = 0; i < SETTINGS.layer_colors.length; i++)
+            if (alpha(SETTINGS.layer_colors[i]) == 128)
+                return i;
+    } catch(e){} // if LAYERS or hover not set, don't die.
+    
+    return -1;
+}
+
+
+void mouseMoved()
+{
+    color prev = get(pmouseX, pmouseY);
+    color hit = get(mouseX, mouseY);
+    
+    var was_hovering = prev != color(SETTINGS.colors.background);
+    var is_hovering = hit != color(SETTINGS.colors.background);
+    
+    function hitTest(i)
+    {
+        // Check mouse position to make sure it could be over this region.
+        // Note: this is purposely loose.
+        var x = SETTINGS.start + (mouseX / width) * (SETTINGS.end - SETTINGS.start);
+        var withinX = LAYERS[i].onset <= x && x <= LAYERS[i].end;
+        
+        x = Math.floor(x);
+        var bottom = i == 0 ? LAYERS[i].yBottom[x] : LAYERS[i-1].yTop[x];
+        var top = i == LAYERS.length-1 ? LAYERS[i].yTop[x] : LAYERS[i + 1].yBottom[x];
+        var withinY = top < mouseY && mouseY < bottom;
+        
+        return withinX && withinY;
+    }
+    
+    if (is_hovering != was_hovering || is_hovering)
+    {
+        if (prev != hit) // Update highlighted layer.
+        {
+            var hover = -1;
+            var s = SETTINGS.layer_colors;
+            for (var i = 0; i < s.length; i++)
+            {   
+                // Check by colors
+                var colorMatch = red(s[i]) == red(hit) && green(s[i]) == green(hit) && blue(s[i]) == blue(hit);
+                
+                // hitTest is necessary since colors could be duplicated.
+                var within = hitTest(i);
+                
+                if (colorMatch && within)
+                    hover = i;
+            }
+            
+            for (int i = 0; i < SETTINGS.layer_colors.length; i++)
+            {
+                color c = SETTINGS.layer_colors[i];
+                var a = (i == hover) ? 128 : 255
+                SETTINGS.layer_colors[i] = color(red(c), green(c), blue(c), a);
+            }
+            REDRAW_REGION = RedrawRegions.all;
+        }
+        else // update text 
+            REDRAW_REGION = RedrawRegions.hover;
+        
+        redraw();
+    }
+}
+
+
+/* Zoom stuff */
+var startX = null;
+var DRAGGED = false;
+
+void keyPressed()
+{
+    if (key == ESC)
+    {
+        // Update settings and redraw (if necessary)
+        SETTINGS.start = 0;
+        SETTINGS.end = -1;
+        REDRAW_REGION = RedrawRegions.all;
+        redraw();
+    }
+}
+
+void mousePressed()
+{
+    startX = mouseX;
+}
+
+void mouseDragged()
+{
+    DRAGGED = true;
+    REDRAW_REGION = RedrawRegions.zoom;
+    redraw();
+}
+
+void mouseReleased()
+{
+    if (DRAGGED)
+    {
+        var x1 = min(mouseX, startX);
+        var x2 = max(mouseX, startX);
+        
+        // Figure out where to zoom.
+        var s = Math.floor(SETTINGS.start + (x1 / width) * (SETTINGS.end - SETTINGS.start));
+        var e = Math.ceil(SETTINGS.start + (x2 / width) * (SETTINGS.end - SETTINGS.start));
+        if (3 < e - s)
+        {
+            SETTINGS.start = s; 
+            SETTINGS.end = e;
+            console.log('drawing from', SETTINGS.start, 'to', SETTINGS.end);
+            REDRAW_REGION = RedrawRegions.all;
+            redraw();
+        }
+        else
+        {
+            startX = null;
+            REDRAW_REGION = RedrawRegions.zoom;
+            redraw(); // kill the rect.
+        }
+    }
+    DRAGGED = false;
+}
