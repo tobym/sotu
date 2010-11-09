@@ -1,0 +1,29 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+    <title>State of the Union</title>
+  </head>
+
+  <body>
+    <h1>State of the Union Streamgraph</h1>
+    <p><a href="sotu.html">Click here to view the streamgraph</a></p>
+    <p>Inspired by the <a href="http://chir.ag/projects/preztags/">presidential speech aging tag cloud</a>, I created a <a href="http://www.leebyron.com/else/streamgraph/">streamgraph</a> of State of the Union addresses.</p>
+    I downloaded State of the Union addresses from 1945 to 2009 from <a href="http://www.c-span.org/Executive/State-of-the-Union.aspx">C-SPAN</a> (skipping 5 from Nixon because they were scans, not text). This was automated using <a href="http://nokogiri.org/">Nokogiri</a> to crawl and <a href="https://github.com/iterationlabs/ruby-readability">Readability</a> to extract the content. I tokenized the documents by word and counted occurences of each word stem, using <a href="http://rubyforge.org/projects/stemmer/">Stemmer</a>. I used <a href="http://code.google.com/p/redis/">Redis</a> to track total stems in the corpus and total stems per document, as well as word frequencies per stem. This allowed me to resolve a given stem back into a word, which is useful for showing a label.</p>
+    <p>Counting by stem rather than word is useful because "people" and "peoples" are effectively synonyms, both having the stem "peopl". The stem "peopl" most frequently came from the word "people", thus "people" was the label for the data points on the "peopl" stem. I kept a sorted set for total-corpus stems, per-document stems, and per-stem words. The parsing process went like this:
+      <ul>
+        <li>generate stem from the next  word token</li>
+        <li>update stem frequency count for the entire corpus</li>
+        <li>update stem frequency count for the current document</li>
+        <li>update word frequency count for the stem</li>
+      </ul>
+    </p>
+    <p>I wanted to use a streamgraph to display the data, and went with a <a href="https://github.com/jsundram/streamgraph.js">javascript implementation</a> to get up and running as fast as possible. All you need to do is define two functions, <code>getStreamgraphData</code> and <code>getStreamgraphLabels</code> which return a 2-dimensional array of data and a 1-dimensional array of labels. The visualization is drawn on a canvas element. The terms displayed are the top 15 in the corpus.</p>
+    <p>This whole project took very little time, mostly accomplished in short bursts of work while unit tests for a different project where running. Future improvements:
+      <ul>
+        <li>more speeches! There are only 60 State of the Union addresses, which means the word trend data was not quite as interesting as I'd hoped. The entire analysis takes less than 2 minutes on a macbook pro i5. The aging tag cloud used a much larger corpus of many presidential speeches.</li>
+        <li>Targeted stoplist. It was not surpising to find that "America" and "nation" were top words; it was interesting that "make" was a top word. Showing top terms from each document might be interesting, because picking the top terms from the corpus intuitively flattens the distribrution.</li>
+      </ul>
+    </p>
+  </body>
+</html>

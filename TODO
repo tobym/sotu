@@ -1,5 +1,0 @@
-* Scrape all state of the union speeches; save in xml documents
-* Generate word counts for each document
-* Filter out stopwords
-* Combine words using stemming
-* Visualize top 100+-50 words per year in a streamgraph or stacked area chart

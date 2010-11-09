@@ -1,0 +1,3 @@
+Streamgraph of common term in State of the Union speeches.
+
+Run scrape.rb, then analyze.rb, then insights.rb.
