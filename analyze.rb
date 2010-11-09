@@ -1,6 +1,7 @@
 require 'nokogiri'
 require 'redis'
 require 'stemmer'
+require 'stoplist'
 
 # Given a file, return words. This will:
 #   * strip HTML tags
@@ -8,9 +9,10 @@ require 'stemmer'
 #     - preserving apostrophes (e.g. "I've" is a word token)
 #   * not return empty tokens
 #   * downcase all string
+#   * skip stopwords (using list from http://jmlr.csail.mit.edu/papers/volume5/lewis04a/a11-smart-stop-list/english.stop)
 def tokenize(file)
   doc = Nokogiri::HTML(open(file))
-  doc.content.split(/[^'\w]/).reject{|token| token == ""}.map{|token| token.downcase}
+  doc.content.split(/[^'\w]/).map{|token| token.downcase}.reject{|token| token == "" || STOPLIST.include?(token)}
 end
 
 redis = Redis.new
