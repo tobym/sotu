@@ -28,6 +28,8 @@ Dir.glob(files).each do |file|
     stem = word.stem
     redis.sadd 'stems', stem # track all stems in entire corpus
     redis.zincrby stem, 1, word # track most common word for a given stem
+    redis.zincrby 'all_words', 1, word # track word frequency in entire corpus
+    redis.zincrby 'all_stems', 1, stem # track stem frequency in entire corpus
     redis.zincrby doc_wordcount_key, 1, word # track word frequency in this document
     redis.zincrby doc_stemcount_key, 1, stem # track stem frequency in this document
   end
